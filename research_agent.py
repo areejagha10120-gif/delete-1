@@ -1,28 +1,65 @@
-import os
+import streamlit as st
+
+# ---------------------------------------------------------
+# GROQ / CREWAI COMPATIBILITY FIX
+# Removes cache_breakpoint before messages reach Groq.
+# ---------------------------------------------------------
+
+import litellm
+
+_original_completion = litellm.completion
+
+
+def _completion_without_cache_breakpoint(*args, **kwargs):
+    # Disable LiteLLM caching
+    kwargs["caching"] = False
+
+    # Remove cache_breakpoint from normal messages
+    messages = kwargs.get("messages", [])
+
+    for message in messages:
+        if isinstance(message, dict):
+            message.pop("cache_breakpoint", None)
+
+            # Also check nested content blocks
+            content = message.get("content")
+
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        block.pop("cache_breakpoint", None)
+
+    return _original_completion(*args, **kwargs)
+
+
+litellm.completion = _completion_without_cache_breakpoint
+
+
+# ---------------------------------------------------------
+# CREWAI IMPORTS
+# ---------------------------------------------------------
 
 from crewai import Agent, Task, Crew, LLM
 from crewai.tools import BaseTool
 from ddgs import DDGS
 
 
-# --------------------------------------------------
-# DuckDuckGo Search Tool
-# --------------------------------------------------
+# ---------------------------------------------------------
+# DUCKDUCKGO SEARCH TOOL
+# ---------------------------------------------------------
 
 class DuckDuckGoSearchTool(BaseTool):
 
     name: str = "DuckDuckGo Web Search"
 
     description: str = (
-        "Search the internet using DuckDuckGo. "
-        "Use this tool to find current and relevant information "
-        "about the user's research topic."
+        "Search the internet using DuckDuckGo to find "
+        "relevant and current information about a research topic."
     )
 
     def _run(self, query: str) -> str:
 
         try:
-
             results = DDGS().text(
                 query,
                 max_results=5
@@ -35,9 +72,20 @@ class DuckDuckGoSearchTool(BaseTool):
 
             for index, result in enumerate(results, start=1):
 
-                title = result.get("title", "No title")
-                url = result.get("href", "")
-                body = result.get("body", "")
+                title = result.get(
+                    "title",
+                    "No title"
+                )
+
+                url = result.get(
+                    "href",
+                    ""
+                )
+
+                body = result.get(
+                    "body",
+                    ""
+                )
 
                 formatted_results.append(
                     f"""
@@ -61,70 +109,80 @@ Description:
             return f"Search failed: {str(e)}"
 
 
-# --------------------------------------------------
-# Create LLM
-# --------------------------------------------------
+# ---------------------------------------------------------
+# CREATE GROQ LLM
+# ---------------------------------------------------------
 
 def create_llm():
 
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = st.secrets.get(
+        "GROQ_API_KEY"
+    )
 
     if not api_key:
+
         raise ValueError(
-            "GROQ_API_KEY is not configured. "
-            "Add your Groq API key to Streamlit Secrets."
+            "GROQ_API_KEY is not configured in Streamlit Secrets."
         )
 
     return LLM(
+
         model="groq/openai/gpt-oss-120b",
+
         api_key=api_key,
+
         temperature=0.2,
+
         max_tokens=8000
     )
 
 
-# --------------------------------------------------
-# Research function
-# --------------------------------------------------
+# ---------------------------------------------------------
+# RUN RESEARCH
+# ---------------------------------------------------------
 
-def run_research(topic: str) -> str:
+def run_research(topic: str):
 
     llm = create_llm()
 
     search_tool = DuckDuckGoSearchTool()
 
-    # --------------------------------------------------
-    # Single Research Agent
-    # --------------------------------------------------
+    # -----------------------------------------------------
+    # RESEARCH AGENT
+    # -----------------------------------------------------
 
     researcher = Agent(
+
         role="Senior Research Analyst",
 
         goal=(
-            "Research the user's topic using reliable web sources "
-            "and produce an accurate, well-structured research report."
+            "Research the user's topic using web search "
+            "and produce an accurate, well-structured "
+            "research report."
         ),
 
         backstory=(
             "You are an experienced research analyst. "
-            "You investigate topics carefully, compare information "
-            "from multiple sources, identify important facts, "
+            "You investigate topics using multiple sources, "
+            "compare information, identify important evidence, "
             "and write clear research reports. "
-            "You never invent sources or facts."
+            "You never invent facts or sources."
         ),
 
         llm=llm,
 
-        tools=[search_tool],
+        tools=[
+            search_tool
+        ],
 
         verbose=False,
 
         allow_delegation=False
     )
 
-    # --------------------------------------------------
-    # Research Task
-    # --------------------------------------------------
+    # -----------------------------------------------------
+    # RESEARCH TASK
+    # -----------------------------------------------------
 
     research_task = Task(
 
@@ -133,36 +191,27 @@ Research the following topic:
 
 {topic}
 
-Your job is to investigate this topic using the web search tool.
+Use the DuckDuckGo web search tool to find
+relevant and reliable information.
 
 Research requirements:
 
-1. Search for relevant information using multiple search queries
-   when necessary.
+1. Search for multiple relevant sources.
+2. Prefer recent and reliable information.
+3. Compare information from different sources.
+4. Do not invent facts.
+5. Do not invent URLs or sources.
+6. Clearly distinguish facts from opinions.
+7. Include useful examples where appropriate.
+8. Explain important limitations or uncertainties.
 
-2. Prefer reliable and authoritative sources.
-
-3. Do not rely on only one website.
-
-4. Cross-check important factual claims when possible.
-
-5. Do not invent facts, statistics, studies, quotations,
-   organizations, or sources.
-
-6. Clearly distinguish established facts from interpretations
-   or opinions.
-
-7. Include source URLs for the important information used.
-
-After completing the research, write a professional report.
-
-The report should contain:
+Create a detailed research report using this structure:
 
 # Title
 
 ## Executive Summary
 
-Give a concise overview of the main findings.
+Give a concise overview of the research.
 
 ## Introduction
 
@@ -170,61 +219,71 @@ Explain the topic and why it matters.
 
 ## Key Findings
 
-Present the most important findings from the research.
+List the most important findings.
 
 ## Detailed Analysis
 
-Explain the topic in more depth.
+Explain the topic in depth using information
+found through web research.
 
 ## Evidence and Examples
 
-Include relevant examples, statistics, studies, or documented
-evidence when available.
+Provide relevant evidence, statistics,
+examples, or real-world cases when available.
 
 ## Challenges and Limitations
 
-Discuss important limitations, disagreements, uncertainties,
-or research gaps.
+Explain limitations, conflicting information,
+or areas where evidence is uncertain.
 
 ## Conclusion
 
-Summarize the main findings without introducing new claims.
+Summarize the main findings.
 
 ## Sources
 
-Provide a numbered list of the URLs used.
+Provide a numbered list of the sources used.
 
-Important:
+For every source include:
 
-- Do not fabricate citations.
-- Only include URLs actually returned by the search tool.
-- Do not claim that a source says something if the search result
-  does not support it.
-- Keep the report factual and readable.
+- Source title
+- URL
+
+Only include URLs that were actually returned
+by the web search tool.
 """,
 
         expected_output=(
-            "A detailed Markdown research report with an executive "
-            "summary, introduction, key findings, detailed analysis, "
-            "evidence, limitations, conclusion, and numbered source URLs."
+            "A detailed Markdown research report containing "
+            "an executive summary, introduction, key findings, "
+            "detailed analysis, evidence and examples, "
+            "challenges and limitations, conclusion, "
+            "and numbered source URLs."
         ),
 
         agent=researcher
     )
 
-    # --------------------------------------------------
-    # Create Crew
-    # --------------------------------------------------
+    # -----------------------------------------------------
+    # CREW
+    # -----------------------------------------------------
 
     crew = Crew(
-        agents=[researcher],
-        tasks=[research_task],
+
+        agents=[
+            researcher
+        ],
+
+        tasks=[
+            research_task
+        ],
+
         verbose=False
     )
 
-    # --------------------------------------------------
-    # Run Crew
-    # --------------------------------------------------
+    # -----------------------------------------------------
+    # START RESEARCH
+    # -----------------------------------------------------
 
     result = crew.kickoff()
 
