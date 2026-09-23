@@ -1,9 +1,9 @@
-import streamlit as st
+ import streamlit as st
 
-# ---------------------------------------------------------
+# =========================================================
 # GROQ / CREWAI COMPATIBILITY FIX
 # Removes cache_breakpoint before messages reach Groq.
-# ---------------------------------------------------------
+# =========================================================
 
 import litellm
 
@@ -11,17 +11,14 @@ _original_completion = litellm.completion
 
 
 def _completion_without_cache_breakpoint(*args, **kwargs):
-    # Disable LiteLLM caching
     kwargs["caching"] = False
 
-    # Remove cache_breakpoint from normal messages
     messages = kwargs.get("messages", [])
 
     for message in messages:
         if isinstance(message, dict):
             message.pop("cache_breakpoint", None)
 
-            # Also check nested content blocks
             content = message.get("content")
 
             if isinstance(content, list):
@@ -35,33 +32,56 @@ def _completion_without_cache_breakpoint(*args, **kwargs):
 litellm.completion = _completion_without_cache_breakpoint
 
 
-# ---------------------------------------------------------
-# CREWAI IMPORTS
-# ---------------------------------------------------------
+# =========================================================
+# IMPORTS
+# =========================================================
+
+from typing import Type
+
+from pydantic import BaseModel, Field
 
 from crewai import Agent, Task, Crew, LLM
 from crewai.tools import BaseTool
+
 from ddgs import DDGS
 
 
-# ---------------------------------------------------------
+# =========================================================
+# DUCKDUCKGO TOOL INPUT SCHEMA
+# =========================================================
+
+class DuckDuckGoSearchInput(BaseModel):
+
+    query: str = Field(
+        ...,
+        description="The exact web search query to search for."
+    )
+
+
+# =========================================================
 # DUCKDUCKGO SEARCH TOOL
-# ---------------------------------------------------------
+# =========================================================
 
 class DuckDuckGoSearchTool(BaseTool):
 
-    name: str = "DuckDuckGo Web Search"
+    name: str = "duck_duck_go_web_search"
 
     description: str = (
-        "Search the internet using DuckDuckGo to find "
-        "relevant and current information about a research topic."
+        "Search the web using DuckDuckGo. "
+        "Use this tool whenever you need current or factual "
+        "information from the internet. "
+        "The input must contain exactly one parameter named "
+        "'query'. Do not use 'search'."
     )
+
+    args_schema: Type[BaseModel] = DuckDuckGoSearchInput
 
     def _run(self, query: str) -> str:
 
         try:
+
             results = DDGS().text(
-                query,
+                query=query,
                 max_results=3
             )
 
@@ -109,15 +129,13 @@ Description:
             return f"Search failed: {str(e)}"
 
 
-# ---------------------------------------------------------
+# =========================================================
 # CREATE GROQ LLM
-# ---------------------------------------------------------
+# =========================================================
 
 def create_llm():
 
-    api_key = st.secrets.get(
-        "GROQ_API_KEY"
-    )
+    api_key = st.secrets.get("GROQ_API_KEY")
 
     if not api_key:
 
@@ -137,9 +155,9 @@ def create_llm():
     )
 
 
-# ---------------------------------------------------------
+# =========================================================
 # RUN RESEARCH
-# ---------------------------------------------------------
+# =========================================================
 
 def run_research(topic: str):
 
@@ -147,9 +165,9 @@ def run_research(topic: str):
 
     search_tool = DuckDuckGoSearchTool()
 
-    # -----------------------------------------------------
-    # RESEARCH AGENT
-    # -----------------------------------------------------
+    # =====================================================
+    # AGENT
+    # =====================================================
 
     researcher = Agent(
 
@@ -157,16 +175,15 @@ def run_research(topic: str):
 
         goal=(
             "Research the user's topic using web search "
-            "and produce an accurate, well-structured "
-            "research report."
+            "and produce an accurate, concise research report."
         ),
 
         backstory=(
             "You are an experienced research analyst. "
-            "You investigate topics using multiple sources, "
+            "You research topics using multiple web sources, "
             "compare information, identify important evidence, "
-            "and write clear research reports. "
-            "You never invent facts or sources."
+            "and write clear factual reports. "
+            "Never invent facts or sources."
         ),
 
         llm=llm,
@@ -180,92 +197,65 @@ def run_research(topic: str):
         allow_delegation=False
     )
 
-    # -----------------------------------------------------
-    # RESEARCH TASK
-    # -----------------------------------------------------
+    # =====================================================
+    # TASK
+    # =====================================================
 
     research_task = Task(
 
         description=f"""
-Research the following topic:
+Research this topic:
 
 {topic}
 
-Use the DuckDuckGo web search tool to find
-relevant and reliable information.
+Follow these steps:
 
-Research requirements:
+1. Use the DuckDuckGo web search tool.
+2. The search tool requires a parameter named "query".
+3. Search for the most relevant information.
+4. Use multiple web sources when appropriate.
+5. Do not invent facts.
+6. Do not invent URLs.
+7. Keep the final report concise.
 
-1. Search for multiple relevant sources.
-2. Prefer recent and reliable information.
-3. Compare information from different sources.
-4. Do not invent facts.
-5. Do not invent URLs or sources.
-6. Clearly distinguish facts from opinions.
-7. Include useful examples where appropriate.
-8. Explain important limitations or uncertainties.
-
-Create a detailed research report using this structure:
+Create a Markdown report with:
 
 # Title
 
 ## Executive Summary
 
-Give a concise overview of the research.
-
-## Introduction
-
-Explain the topic and why it matters.
-
 ## Key Findings
-
-List the most important findings.
 
 ## Detailed Analysis
 
-Explain the topic in depth using information
-found through web research.
-
 ## Evidence and Examples
 
-Provide relevant evidence, statistics,
-examples, or real-world cases when available.
-
-## Challenges and Limitations
-
-Explain limitations, conflicting information,
-or areas where evidence is uncertain.
+## Limitations
 
 ## Conclusion
 
-Summarize the main findings.
-
 ## Sources
 
-Provide a numbered list of the sources used.
+For Sources, include the title and URL of
+sources actually returned by the search tool.
 
-For every source include:
-
-- Source title
-- URL
-
-Only include URLs that were actually returned
-by the web search tool.
+Keep the final report under approximately
+1500 words.
 """,
 
         expected_output=(
-            "A concise but useful Markdown research report "
-            "with an executive summary, key findings, analysis, "
-            "limitations, conclusion, and numbered source URLs. "
-            "Keep the report under approximately 1500 words."
+            "A concise Markdown research report with "
+            "an executive summary, key findings, detailed "
+            "analysis, evidence, limitations, conclusion, "
+            "and numbered source URLs."
         ),
 
         agent=researcher
     )
 
-    # -----------------------------------------------------
+    # =====================================================
     # CREW
-    # -----------------------------------------------------
+    # =====================================================
 
     crew = Crew(
 
@@ -280,9 +270,9 @@ by the web search tool.
         verbose=False
     )
 
-    # -----------------------------------------------------
-    # START RESEARCH
-    # -----------------------------------------------------
+    # =====================================================
+    # RUN
+    # =====================================================
 
     result = crew.kickoff()
 
