@@ -62,7 +62,7 @@ class DuckDuckGoSearchTool(BaseTool):
         try:
             results = DDGS().text(
                 query,
-                max_results=5
+                max_results=3
             )
 
             if not results:
@@ -133,7 +133,7 @@ def create_llm():
 
         temperature=0.2,
 
-        max_tokens=8000
+        max_tokens=3000
     )
 
 
@@ -254,11 +254,10 @@ by the web search tool.
 """,
 
         expected_output=(
-            "A detailed Markdown research report containing "
-            "an executive summary, introduction, key findings, "
-            "detailed analysis, evidence and examples, "
-            "challenges and limitations, conclusion, "
-            "and numbered source URLs."
+            "A concise but useful Markdown research report "
+            "with an executive summary, key findings, analysis, "
+            "limitations, conclusion, and numbered source URLs. "
+            "Keep the report under approximately 1500 words."
         ),
 
         agent=researcher
